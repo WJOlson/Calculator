@@ -1,4 +1,4 @@
-#Calculator
+Calculator
 
 A calculator console application. 
 The windows x64 version is found in "win x64".
@@ -16,5 +16,5 @@ Anything within square brackets is either a token or a grammatical rule.
 	fnt [identifier] '(' [parameters] ')' '=' [expression]: defines a new function.
 
 Building with CMake:
-Requires cmake to build:
+Requires cmake to build (build within repo directory):
 	build command: cmake . -B ./build

@@ -54,9 +54,9 @@ struct Token {
 	Token() = default;
 };
 
-constexpr int keywordsMax = 5;
+constexpr int keywordsMax = 3;
 
-std::istream& operator>>(std::istream& is, Token& t) 
+std::istream& operator>>(std::istream& is, Token& t) //supports reading tokens
 {
 	static std::array<std::string_view, keywordsMax> keywords =
 	{
@@ -76,7 +76,7 @@ std::istream& operator>>(std::istream& is, Token& t)
 	t.lexeme = "";
 	t.type = EOF;
 
-	is >> c;
+	is >> c; //scan first character
 	
 	if (c == EOF) {
 		is.setf(std::ios::eofbit);
@@ -203,21 +203,27 @@ using SymbolVal = std::variant<uint16_t, Function>;
 std::unordered_map<std::string, SymbolVal> globalSymTbl;
 
 template<class T>
-void writeArgToChunk(std::vector<uint8_t>&,const T&);
+void writeArgToChunk(std::vector<uint8_t>&,const T&); //for writing args to code chunk
 
 double execute(std::vector<uint8_t>&);
-
-int prsArgList(Tokeniser&, std::vector<uint8_t>&, std::unordered_map<std::string, SymbolVal>&, std::vector<std::string>* paramNames=nullptr);
 
 bool prsFunctDef(Tokeniser&, std::vector<uint8_t>&);
 
 bool prsLetStmt(Tokeniser&, std::vector<uint8_t>&, std::unordered_map<std::string, SymbolVal>&);
+
+bool prsDelStmt(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, std::unordered_map<std::string, SymbolVal>& varTbl);
 
 bool prsStmt(Tokeniser&,std::vector<uint8_t>&);
 
 bool prsExpr(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, std::unordered_map<std::string, SymbolVal>* localVars = nullptr);
 
 bool prsVal(Tokeniser&, std::vector<uint8_t>&, std::unordered_map<std::string, SymbolVal>* localVars = nullptr);
+
+bool addSymbol(std::unordered_map<std::string, SymbolVal>& tbl, const std::string& name, SymbolVal sym);
+
+bool removeSymbol(std::unordered_map<std::string, SymbolVal>& tbl, const std::string& name);
+
+bool expectToken(Tokeniser& tokeniser, int8_t tokTy, const char* errMsg, Token* storePtr);
 
 template<class T>
 void writeArgToChunk(std::vector<uint8_t>& codeChunk, const T& arg) 
@@ -230,6 +236,7 @@ void writeArgToChunk(std::vector<uint8_t>& codeChunk, const T& arg)
 
 constexpr uint16_t globalsMax = 1024;
 
+//The VM itself
 double execute(uint8_t* code) 
 {
 	using StackData = std::variant<uint8_t*,double>;
@@ -387,49 +394,7 @@ bool expectToken(Tokeniser& tokeniser, int8_t tokTy, const char* errMsg, Token* 
 	return false;
 }
 
-bool prsListElem(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, std::unordered_map<std::string, SymbolVal>& varTbl)
-{
-	Token t = tokeniser.get();
-
-	if (t.type == tokLetKeyword) {
-		tokeniser.unget(t);
-		return prsLetStmt(tokeniser, codeChunk, varTbl);
-	}
-	
-	return prsExpr(tokeniser, codeChunk, &varTbl);
-}
-
-int prsArgList(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, std::unordered_map<std::string, SymbolVal>& varTbl, std::vector<std::string>* paramNames) 
-{
-	bool succ = expectToken(tokeniser, '(', "Expected a '('");
-	Token t;
-	int8_t nArgsParsed = 0;
-
-	while ((t = tokeniser.get()).type != ')') {
-		tokeniser.unget(t);
-		if (!paramNames) {
-			nArgsParsed = prsListElem(tokeniser, codeChunk, varTbl) ? nArgsParsed+1 : -1;
-		}
-		else {
-			nArgsParsed = expectToken(tokeniser, tokWord, "Expected a parameter", &t) ? nArgsParsed + 1 : -1;
-			paramNames->emplace_back(t.lexeme);
-		}
-
-		t = tokeniser.get();
-		if (t.type == ')') {
-			tokeniser.unget(t);
-			continue;
-		}
-
-		if (t.type != ',') {
-			std::cerr << "Expected a ','\n";
-		}
-	}
-
-	return nArgsParsed;
-}
-
-//<Functor>::= word '(' <arg-list> ')'
+//<Functor>::= word '('  ')'
 bool prsFunctor(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, bool isFunctCall, std::unordered_map<std::string,SymbolVal>* localVars=nullptr, std::vector<std::string>* params = nullptr)
 {
 	Token functName, t;
@@ -532,6 +497,7 @@ bool prsFunctDef(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk)
 	return succ;
 }
 
+//<LetStmt>:: 'let' <identifier> '=' <Expr>
 bool prsLetStmt(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, std::unordered_map<std::string, SymbolVal>& varTbl)
 {
 	Token t = tokeniser.get(); //read 'let' keyword
@@ -565,6 +531,7 @@ bool prsLetStmt(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, std::unor
 	return succ;
 }
 
+//<DelStmt>:: 'del' <identifier>
 bool prsDelStmt(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, std::unordered_map<std::string, SymbolVal>& varTbl) 
 {
 	Token t = tokeniser.get(); //read 'del' keyword
@@ -591,6 +558,9 @@ bool prsDelStmt(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, std::unor
 	return succ;
 }
 
+/*
+	<Val>:: <number> | <identifier> | '+' <Val> | '-' <Val> | '(' <Expr> ')'
+*/
 bool prsVal(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, std::unordered_map<std::string, SymbolVal>* localVars)
 {
 	Token t = tokeniser.get();
@@ -655,7 +625,18 @@ bool prsVal(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, std::unordere
 
 #define LEFT_ASSOC (true)
 #define RIGHT_ASSOC (false)
-
+/*
+	Binding power is denoted within curly brackets
+	Precedence is in descending order
+	<Expr>:: <Val> |
+			 <Expr> '*' <Expr> {2}
+			 <Expr> '/' <Expr> {2}
+			 <Expr> '+' <Expr> {1}
+			 <Expr> '-' <Expr> {1}
+			 <Expr> '>' <Expr> {0}
+			 <Expr> '<' <Expr> {0}
+			 <Expr> '=' <Expr> {-1}
+*/
 bool prsExpr(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, std::unordered_map<std::string, SymbolVal>* localVars)
 {
 	using OpInfo = std::pair<int8_t, bool>;
@@ -705,7 +686,7 @@ bool prsExpr(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, std::unorder
 	while (infixOpPrec.find((op = tokeniser.get()).type) != infixOpPrec.end() && op.type != ')') { //is the token an operator (exception being ')')?
 		int8_t opPrec = infixOpPrec.at(op.type).first;
 		
-		while (!opStack.empty() && opPrec <= infixOpPrec.at(opStack.back()).first && infixOpPrec.at(opStack.back()).second != RIGHT_ASSOC) { //if weaker precedence, pop and compute
+		while (!opStack.empty() && opPrec <= infixOpPrec.at(opStack.back()).first) { //if weaker precedence, pop and compute
 			computeOp(opStack.back());
 			opStack.pop_back();
 		} 
@@ -726,6 +707,7 @@ bool prsExpr(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk, std::unorder
 	return succ;
 }
 
+//<Stmt>:: <LetStmt> ';' | <DelStmt> ';' | <Expr> ';' | <FntDef> ';'
 bool prsStmt(Tokeniser& tokeniser, std::vector<uint8_t>& codeChunk) 
 {
 	Token t = tokeniser.get();
@@ -778,12 +760,12 @@ int main(int argc, char** argv)
 	
 	Tokeniser stdTokeniser(is);
 	std::cout << '>';
-	while (bufferInputTil(is, '\n')) {
+	while (bufferInputTil(is, '\n')) { //keep scanning til '\n'
 		while ((t = stdTokeniser.get()).type != EOF) {
 			stdTokeniser.unget(t);
-			bool success = prsStmt(stdTokeniser, codeChunk);
+			bool success = prsStmt(stdTokeniser, codeChunk); //parse
 			
-			if (success) execute(codeChunk.data());
+			if (success) execute(codeChunk.data()); //interpret
 			
 			memset(codeChunk.data(), 0, codeChunk.size());
 			codeChunk.clear();
